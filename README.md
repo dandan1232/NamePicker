@@ -3,3 +3,8 @@
 
 ![img_1.png](img_1.png)
 
+
+
+- 文件打包：
+- pip install -U pyinstaller
+- pyinstaller --noconfirm --onefile --windowed --name 点名系统 --icon=app.ico --collect-all qfluentwidgets --hidden-import openpyxl name_picker.py
