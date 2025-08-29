@@ -8,11 +8,8 @@
 import sys, os, random, json
 from datetime import datetime
 import pandas as pd
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, QEvent
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer
-from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QTableWidgetItem, QAbstractItemView
-)
 
 from qfluentwidgets import (
     FluentWindow, setTheme, Theme, setFont,
@@ -26,6 +23,11 @@ from qfluentwidgets import (
     ProgressBar, MessageBox, CardWidget,
     InfoBadge, InfoBadgePosition
 )
+from PySide6.QtWidgets import (
+    QApplication, QFileDialog, QTableWidgetItem, QAbstractItemView,
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
+)
+
 
 CACHE_FILE = "roster_cache.xlsx"
 STATE_FILE = "app_state.json"
@@ -90,8 +92,8 @@ class PandasModel(QAbstractTableModel):
 class MainWindow(FluentWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("课堂点名 · Fluent 风格（PyQt-Fluent-Widgets 1.x）")
-        setTheme(Theme.LIGHT)   # 默认浅色；想默认深色可改成 Theme.DARK
+        self.setWindowTitle("课堂点名 · 章老师版")
+        setTheme(Theme.LIGHT)   # 默认浅色
         setFont(self, 12)
 
         # 状态
@@ -104,7 +106,7 @@ class MainWindow(FluentWindow):
 
         # 定时器
         self.roll_timer = QTimer(self)
-        self.roll_timer.setInterval(50)              # 滚动速度（毫秒）
+        self.roll_timer.setInterval(50)     # 滚动速度（毫秒）
         self.roll_timer.timeout.connect(self._roll_tick)
 
         self.auto_sign_timer = QTimer(self)
@@ -136,73 +138,118 @@ class MainWindow(FluentWindow):
 
     # --------- UI ----------
     def _build_ui(self):
-        self.addSubInterface(self._build_main_page(), FI.HOME, "点名", NavigationItemPosition.TOP)
-        self.addSubInterface(self._build_settings_page(), FI.SETTING, "设置", NavigationItemPosition.BOTTOM)
+        self.page_main = self._build_main_page()
+        self.addSubInterface(self.page_main, FI.HOME, "点名", NavigationItemPosition.TOP)
+
+        # —— 彩蛋页（占位，不显示内容）——
+        self.page_egg = QWidget(self)
+        self.page_egg.setObjectName("eggPage")  # 必须要有对象名
+        self.addSubInterface(self.page_egg, FI.HEART, "彩蛋", NavigationItemPosition.BOTTOM)
+
+        # 用事件过滤器来“拦截显示”，弹出彩蛋后再切回主页
+        self.page_egg.installEventFilter(self)
+
         self.navigationInterface.setAcrylicEnabled(True)
         self.titleBar.raise_()
 
+    def eventFilter(self, obj, event):
+        # 当左下角“彩蛋”页被切换为可见时，立刻弹出彩蛋并回到主页
+        if obj is getattr(self, "page_egg", None) and event.type() == QEvent.Show:
+            self._show_easter_egg()
+            try:
+                self.stackedWidget.setCurrentWidget(self.page_main)
+                self.navigationInterface.setCurrentItem("mainPage")
+            except Exception:
+                pass
+            return True
+        return super().eventFilter(obj, event)
+
+    def _on_egg_clicked(self):
+        self._show_easter_egg()  # 弹出彩蛋
+        # 回到主页面（防止停在空白占位页）
+        try:
+            self.stackedWidget.setCurrentWidget(self.page_main)
+            self.navigationInterface.setCurrentItem("mainPage")
+        except Exception:
+            pass
+
+    def _show_easter_egg(self):
+        MessageBox("🎁 彩蛋", "恭喜星星同学发现了隐藏的彩蛋！\n奖励你师德+1！", self).exec()
+
     def _build_main_page(self):
-        page = CardWidget(self)
+        page = QWidget(self)
         page.setObjectName("mainPage")
-        page.setMinimumSize(960, 640)
+        page.setMinimumSize(1080, 640)
 
-        # 顶部工具条
+        # ===== 顶部工具条 =====
         self.btnImport = PrimaryPushButton(FI.FOLDER, "导入Excel", page)
-        self.btnImport.clicked.connect(self.load_excel)
-
-        self.btnToggle = PrimaryPushButton(FI.PLAY, "开始", page)   # 会在 toggle_roll 中改成“暂停”
-        self.btnToggle.clicked.connect(self.toggle_roll)
-
+        self.btnToggle = PrimaryPushButton(FI.PLAY, "开始", page)  # 开始/暂停在 toggle_roll 中切换
         self.btnSign = PrimaryPushButton(FI.CHECKBOX, "签到", page)
-        self.btnSign.clicked.connect(self.sign_current_or_selected)
-
         self.btnClearAll = PushButton(FI.DELETE, "清空所有签到", page)
-        self.btnClearAll.clicked.connect(self.clear_all_sign)
-
         self.btnClearSel = PushButton(FI.REMOVE, "清除选中行签到", page)
-        self.btnClearSel.clicked.connect(self.clear_selected_sign)
-
         self.chkNoRepeat = CheckBox("不重复抽取（默认）", page)
+        self.btnTheme = PushButton(FI.BRUSH, "切换主题", page)
+        self.searchBox = LineEdit(page);
+        self.searchBox.setPlaceholderText("按学号/姓名搜索")
+
+        self.btnImport.clicked.connect(self.load_excel)
+        self.btnToggle.clicked.connect(self.toggle_roll)
+        self.btnSign.clicked.connect(self.sign_current_or_selected)
+        self.btnClearAll.clicked.connect(self.clear_all_sign)
+        self.btnClearSel.clicked.connect(self.clear_selected_sign)
         self.chkNoRepeat.setChecked(self.no_repeat)
         self.chkNoRepeat.stateChanged.connect(self._toggle_no_repeat)
-
-        self.btnTheme = PushButton(FI.BRUSH, "切换主题", page)
         self.btnTheme.clicked.connect(self._toggle_theme)
-
-        self.searchBox = LineEdit(page)
-        self.searchBox.setPlaceholderText("按学号/姓名搜索")
         self.searchBox.textChanged.connect(self._on_search)
 
-        # 统计与进度
-        self.lblStats = StrongBodyLabel("总数：0 | 已签到：0 | 未签到：0", page)
-        self.badgePresent = InfoBadge.success("0", parent=page, position=InfoBadgePosition.TOP_RIGHT)
-        self.progress = ProgressBar(page)
-        self.progress.setValue(0)
+        topBar = QHBoxLayout()
+        topBar.setContentsMargins(0, 0, 0, 0)
+        topBar.setSpacing(8)
+        for w in [self.btnImport, self.btnToggle, self.btnSign, self.btnClearAll, self.btnClearSel,
+                  self.chkNoRepeat, self.btnTheme, self.searchBox]:
+            topBar.addWidget(w)
+        topBar.addStretch(1)
 
-        # 大屏显示
+        # ===== 大屏显示 =====
         self.bigText = StrongBodyLabel("——", page)
         self.bigText.setAlignment(Qt.AlignCenter)
-        self.bigText.setFixedHeight(120)
-        self.bigText.setStyleSheet("""
-            QLabel{
-                font-size: 48px; font-weight: 800;
-                border-radius: 18px; padding: 14px 20px;
-                background: rgba(0,0,0,0.05);
-            }
-        """)
+        bigFrame = QFrame(page)
+        bigFrame.setFrameShape(QFrame.StyledPanel)
+        bigFrame.setStyleSheet("QFrame{background:rgba(0,0,0,0.05); border-radius:18px;}")
+        bigLay = QVBoxLayout(bigFrame);
+        bigLay.setContentsMargins(16, 16, 16, 16)
+        self.bigText.setStyleSheet("QLabel{font-size:48px; font-weight:800;}")
+        self.bigText.setMinimumHeight(120)
+        bigLay.addWidget(self.bigText)
 
-        # 速度 & 倒计时
+        # ===== 统计 & 控件 =====
+        self.lblStats = StrongBodyLabel("总数：0 | 已签到：0 | 未签到：0", page)
+        self.progress = ProgressBar(page);
+        self.progress.setValue(0)
+
+        statsLay = QVBoxLayout()
+        statsLay.setSpacing(6)
+        statsLay.addWidget(self.lblStats)
+        statsLay.addWidget(self.progress)
+
         self.speedSlider = Slider(Qt.Horizontal, page)
-        self.speedSlider.setRange(10, 200)   # 10~200ms
+        self.speedSlider.setRange(10, 200);
         self.speedSlider.setValue(50)
         self.speedSlider.valueChanged.connect(lambda v: self.roll_timer.setInterval(v))
+        self.countdownSpin = SpinBox(page);
+        self.countdownSpin.setRange(0, 10);
+        self.countdownSpin.setValue(0)
 
-        self.countdownSpin = SpinBox(page)
-        self.countdownSpin.setRange(0, 10)
-        self.countdownSpin.setValue(0)       # 0 表示不自动签到
+        ctrlLay = QHBoxLayout()
+        ctrlLay.setSpacing(12)
+        ctrlLay.addLayout(statsLay, stretch=1)
+        ctrlLay.addWidget(BodyLabel("滚动速度（毫秒）", page))
+        ctrlLay.addWidget(self.speedSlider)
+        ctrlLay.addWidget(BodyLabel("自动签到延迟（秒）", page))
+        ctrlLay.addWidget(self.countdownSpin)
 
-        # 表格
-        self.table = TableWidget(page)       # 1.x 只接受 parent
+        # ===== 表格 =====
+        self.table = TableWidget(page)  # 1.x 只接受 parent
         self.table.setRowCount(0)
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["学号", "姓名", "签到状态", "签到时间"])
@@ -211,41 +258,27 @@ class MainWindow(FluentWindow):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # —— 简单定位布局（qfluentwidgets 自适应良好）——
-        self.btnImport.move(20, 20)
-        self.btnToggle.move(130, 20)
-        self.btnSign.move(230, 20)
-        self.btnClearAll.move(320, 20)
-        self.btnClearSel.move(430, 20)
-        self.chkNoRepeat.move(560, 24)
-        self.btnTheme.move(690, 20)
-        self.searchBox.resize(200, 36); self.searchBox.move(790, 20)
-
-        self.bigText.resize(920, 120); self.bigText.move(20, 70)
-        self.lblStats.move(20, 200)
-        self.progress.resize(400, 8); self.progress.move(20, 228)
-
-        BodyLabel("滚动速度（毫秒）", page).move(460, 200)
-        self.speedSlider.resize(180, 22); self.speedSlider.move(580, 200)
-
-        BodyLabel("自动签到延迟（秒）", page).move(780, 200)
-        self.countdownSpin.move(920, 196)
-
-        self.table.resize(920, 380); self.table.move(20, 250)
+        # ===== 页面总体布局 =====
+        root = QVBoxLayout(page)
+        root.setContentsMargins(20, 16, 20, 16)
+        root.setSpacing(12)
+        root.addLayout(topBar)
+        root.addWidget(bigFrame)
+        root.addLayout(ctrlLay)
+        root.addWidget(self.table, stretch=1)
 
         return page
 
-    def _build_settings_page(self):
-        page = CardWidget(self)
-        page.setObjectName("settingsPage")
-        BodyLabel("设置", page).move(20, 20)
-        BodyLabel("这里预留将来的高级选项。", page).move(20, 50)
-        return page
 
     # --------- 数据/缓存 ----------
     def _toggle_theme(self):
-        setTheme(Theme.DARK if self.theme() == Theme.LIGHT else Theme.LIGHT)
+        # 用实例变量记录当前主题，避免调用不存在的 self.theme()
+        if not hasattr(self, "_is_dark"):
+            self._is_dark = False
+        self._is_dark = not self._is_dark
+        setTheme(Theme.DARK if self._is_dark else Theme.LIGHT)
 
     def _toggle_no_repeat(self, _):
         self.no_repeat = self.chkNoRepeat.isChecked()
@@ -345,7 +378,7 @@ class MainWindow(FluentWindow):
         idx = {"学号":0, "姓名":1, "签到状态":2, "签到时间":3}
         try:
             self.table.setColumnWidth(idx["学号"], 120)
-            self.table.setColumnWidth(idx["姓名"], 140)
+            self.table.setColumnWidth(idx["姓名"], 180)
             self.table.setColumnWidth(idx["签到状态"], 120)
             self.table.setColumnWidth(idx["签到时间"], 180)
         except Exception:
@@ -483,22 +516,29 @@ class MainWindow(FluentWindow):
         if self.df is None or self.df.empty:
             self.lblStats.setText("总数：0 | 已签到：0 | 未签到：0")
             self.progress.setValue(0)
-            self.badgePresent.setText("0")
             return
         total = len(self.df)
         present = (self.df["签到状态"] == "已签到").sum()
         absent = total - present
         self.lblStats.setText(f"总数：{total} | 已签到：{present} | 未签到：{absent}")
         self.progress.setValue(int(present * 100 / total) if total else 0)
-        self.badgePresent.setText(str(present))
-        self.badgePresent.move(900, 8)  # 固定徽章位置
+
 
 def main():
     app = QApplication(sys.argv)
     w = MainWindow()
-    w.resize(1000, 700)
+    w.resize(1040, 700)   # 默认大小
     w.show()
+
+    # ===== 让窗口居中 =====
+    rect = w.frameGeometry()
+    center = app.primaryScreen().availableGeometry().center()
+    rect.moveCenter(center)
+    w.move(rect.topLeft())
+    # ====================
+
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()
