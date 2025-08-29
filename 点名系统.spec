@@ -9,7 +9,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['name_picker.py'],
+    ['name_picker_clean.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
